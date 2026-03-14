@@ -44,7 +44,9 @@ fn read_binary_from_archive(
     Ok(Some(buffer))
 }
 
-/// Given an ebpub file, unzip it and view list all internal resources
+/// Internal representation of an epub file with all required elements for
+/// 1. encrypting a epub publication to a lcp encrypted epub.
+/// 2. decrypting a lcp encrypted epub to a regular epub.
 #[derive(Debug)]
 pub struct Epub {
     archive: ZipArchive<File>,
@@ -55,6 +57,7 @@ pub struct Epub {
 }
 
 impl Epub {
+    /// Load a type `Self` from the given path.
     pub fn new(path: PathBuf) -> Result<Self, String> {
         let epub_file = File::open(&path).map_err(|e| format!("Unable to open file {}", e))?;
         let mut zip = zip::ZipArchive::new(epub_file)
@@ -75,6 +78,7 @@ impl Epub {
         })
     }
 
+    /// Returns the license file.
     pub fn license(&self) -> Option<&License> {
         self.license.as_ref()
     }

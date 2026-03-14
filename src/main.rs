@@ -49,7 +49,7 @@ pub enum Commands {
     },
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
     let cli = Cli::parse();
 
     match cli.command {
@@ -58,12 +58,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             password,
             profile,
             output,
-        } => encrypt_epub(input, password, profile, output),
+        } => encrypt_epub(input, password, profile, output).unwrap(),
         Commands::Decrypt {
             input,
             password,
             profile,
             output,
-        } => decrypt_epub(input, password, profile, output),
+        } => decrypt_epub(input, password, profile, output).unwrap(),
     }
 }
