@@ -5,9 +5,24 @@ pub mod aes_cbc256 {
     };
     use block_padding::Pkcs7;
     use cbc::{Decryptor, Encryptor};
+    use rand::{TryRngCore, rngs::OsRng};
 
     type Aes256CbcEnc = Encryptor<Aes256>;
     type Aes256CbcDec = Decryptor<Aes256>;
+
+    /// Encrypts with a randomly generated iv.
+    /// The iv is prepended to the ciphertext and returned.
+    pub fn encrypt_aes_256_cbc_with_random_iv(plaintext: &[u8], key: &[u8; 32]) -> Vec<u8> {
+        // Generate a random iv
+        let mut iv = [0u8; 16];
+        OsRng
+            .try_fill_bytes(&mut iv)
+            .expect("Failed to generate randomness");
+        let mut encrypted = encrypt_aes_256_cbc(plaintext, key, &iv);
+        let mut ciphertex = iv.to_vec();
+        ciphertex.append(&mut encrypted);
+        ciphertex
+    }
 
     pub fn encrypt_aes_256_cbc(plaintext: &[u8], key: &[u8; 32], iv: &[u8; 16]) -> Vec<u8> {
         let encryptor = Aes256CbcEnc::new(key.into(), iv.into());
@@ -28,11 +43,29 @@ pub mod aes_cbc256 {
 
         Ok(decrypted_data.to_vec())
     }
+
+    pub fn decrypt_aes_256_cbc_with_prepended_iv(
+        ciphertext: &[u8],
+        key: &[u8; 32],
+    ) -> Result<Vec<u8>, String> {
+        let mut ciphertext = ciphertext.to_vec();
+        // iv is the first 16 bytes
+        let mut iv = [0; 16];
+        iv.copy_from_slice(&ciphertext[0..16]);
+
+        let decryptor = Aes256CbcDec::new(key.into(), &iv.into());
+
+        let decrypted_data = decryptor
+            .decrypt_padded_mut::<Pkcs7>(&mut ciphertext[16..])
+            .map_err(|e| format!("Decryption failed: {:?}", e))?;
+
+        Ok(decrypted_data.to_vec())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::aes_cbc256::{decrypt_aes_256_cbc, encrypt_aes_256_cbc};
+    use super::aes_cbc256::*;
 
     const KEY: &[u8; 32] = &[42; 32];
     const IV: &[u8; 16] = &[41; 16];
@@ -42,6 +75,13 @@ mod tests {
     fn test_roundtrip() {
         let ciphertext = encrypt_aes_256_cbc(PLAINTEXT, KEY, IV);
         let decrypted = decrypt_aes_256_cbc(&ciphertext, KEY, IV).unwrap();
+        assert_eq!(decrypted, PLAINTEXT);
+    }
+
+    #[test]
+    fn test_roundtrip_random_iv() {
+        let ciphertext = encrypt_aes_256_cbc_with_random_iv(PLAINTEXT, KEY);
+        let decrypted = decrypt_aes_256_cbc_with_prepended_iv(&ciphertext, KEY).unwrap();
         assert_eq!(decrypted, PLAINTEXT);
     }
 
