@@ -9,13 +9,9 @@ pub mod aes_cbc256 {
     type Aes256CbcEnc = Encryptor<Aes256>;
     type Aes256CbcDec = Decryptor<Aes256>;
 
-    pub fn encrypt_aes_256_cbc(
-        plaintext: &[u8],
-        key: &[u8; 32],
-        iv: &[u8; 16],
-    ) -> Result<Vec<u8>, String> {
+    pub fn encrypt_aes_256_cbc(plaintext: &[u8], key: &[u8; 32], iv: &[u8; 16]) -> Vec<u8> {
         let encryptor = Aes256CbcEnc::new(key.into(), iv.into());
-        Ok(encryptor.encrypt_padded_vec_mut::<Pkcs7>(plaintext))
+        encryptor.encrypt_padded_vec_mut::<Pkcs7>(plaintext)
     }
 
     pub fn decrypt_aes_256_cbc(
@@ -44,14 +40,14 @@ mod tests {
 
     #[test]
     fn test_roundtrip() {
-        let ciphertext = encrypt_aes_256_cbc(PLAINTEXT, KEY, IV).unwrap();
+        let ciphertext = encrypt_aes_256_cbc(PLAINTEXT, KEY, IV);
         let decrypted = decrypt_aes_256_cbc(&ciphertext, KEY, IV).unwrap();
         assert_eq!(decrypted, PLAINTEXT);
     }
 
     #[test]
     fn test_incorrect_key() {
-        let ciphertext = encrypt_aes_256_cbc(PLAINTEXT, KEY, IV).unwrap();
+        let ciphertext = encrypt_aes_256_cbc(PLAINTEXT, KEY, IV);
 
         let wrong_key: &[u8; 32] = &[40; 32];
         // Decryption with the wrong key errors with bad padding
@@ -60,7 +56,7 @@ mod tests {
 
     #[test]
     fn test_incorrect_iv() {
-        let ciphertext = encrypt_aes_256_cbc(PLAINTEXT, KEY, IV).unwrap();
+        let ciphertext = encrypt_aes_256_cbc(PLAINTEXT, KEY, IV);
 
         let wrong_iv: &[u8; 16] = &[40; 16];
         // Decryption with the wrong iv produces incorrect result
