@@ -18,11 +18,15 @@ This library provides DRM (Digital Rights Management) functionality for EPUB fil
 
 | Module | Purpose |
 |--------|---------|
-| `license` | LCP License Document (.lcpl) parsing and manipulation |
-| `key` | User passphrase handling and SHA-256 key derivation |
-| `cipher` | AES-256-CBC encryption/decryption operations |
-| `epub` | EPUB archive handling and decrypted content extraction |
-| `encoding` | Serde helpers for dates and X.509 certificates |
+| `license` | LCP License Document (.lcpl) parsing, manipulation, and builder |
+| `license::encoding` | Serde helpers for dates and X.509 certificates |
+| `license::profile` | Encryption profile definitions (e.g. Basic) |
+| `crypto` | All cryptographic operations |
+| `crypto::key` | User passphrase handling and SHA-256 key derivation |
+| `crypto::cipher` | AES-256-CBC encryption/decryption operations |
+| `crypto::transform` | Extension trait for supporting additional encryption profiles |
+| `epub` | EPUB archive handling and encrypted content extraction |
+| `epub::xml_utils` | XML/OPF parsing helpers and encryption.xml generation |
 
 ### Design Goals
 
@@ -35,17 +39,23 @@ This library provides DRM (Digital Rights Management) functionality for EPUB fil
 - License parsing: Complete
 - Key derivation (SHA-256): Complete
 - Content decryption (AES-256-CBC): Complete
-- Profile abstraction traits: Planned/In Progress
+- Profile abstraction traits: In Progress
 - Signature verification: Not implemented
 - LSD (License Status Document): Not implemented
 
 ## Key Files
 
-- `src/lib.rs` - Library entry point
+- `src/lib.rs` - Library entry point, top-level encrypt/decrypt API
 - `src/main.rs` - CLI test tool
-- `src/license.rs` - License document structures
-- `src/cipher.rs` - Cryptographic operations
-- `src/epub.rs` - EPUB file operations
+- `src/license/mod.rs` - License document structures and builder
+- `src/license/encoding.rs` - Serde helpers for dates and X.509 certificates
+- `src/license/profile.rs` - Encryption profile definitions
+- `src/crypto/mod.rs` - Crypto module root
+- `src/crypto/cipher.rs` - AES-256-CBC cryptographic operations
+- `src/crypto/key.rs` - User passphrase and content key handling
+- `src/crypto/transform.rs` - Extension trait for encryption profiles
+- `src/epub/mod.rs` - EPUB file operations (read, encrypt, write)
+- `src/epub/xml_utils.rs` - XML/OPF parsing and encryption.xml generation
 
 ## References
 
