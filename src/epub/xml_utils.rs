@@ -108,7 +108,10 @@ impl ManifestItem {
     }
 }
 
-/// Information about an encrypted file for generating encryption.xml.
+/// Information about an encrypted file.
+///
+/// Used both for generating encryption.xml during encryption and for
+/// parsing encryption.xml during decryption.
 #[derive(Debug, Clone)]
 pub struct EncryptedFileInfo {
     /// The relative URI path within the EPUB.
@@ -249,6 +252,62 @@ pub fn write_encryption_xml(encrypted_files: &[EncryptedFileInfo]) -> String {
     xmlns:ds="http://www.w3.org/2000/09/xmldsig#">{entries}
 </encryption>"#
     )
+}
+
+// =============================================================================
+// Encryption.xml Parsing
+// =============================================================================
+
+/// Parse encryption.xml to extract the list of encrypted resources.
+///
+/// Returns a list of `EncryptedFileInfo` with paths and compression info
+/// needed for decryption.
+///
+/// # Arguments
+/// * `xml` - The contents of the encryption.xml file as a string
+///
+/// # Returns
+/// A vector of `EncryptedFileInfo` structs, one for each encrypted file in the EPUB.
+pub fn parse_encryption_xml(xml: &str) -> Result<Vec<EncryptedFileInfo>, String> {
+    let doc = Document::parse(xml).map_err(|e| format!("Failed to parse encryption.xml: {}", e))?;
+
+    let encrypted_data_elements = find_all_elements(doc.root_element(), "EncryptedData");
+
+    let mut resources = Vec::with_capacity(encrypted_data_elements.len());
+
+    for encrypted_data in encrypted_data_elements {
+        // Extract the URI from CipherData/CipherReference
+        let uri = find_element(encrypted_data, "CipherReference")
+            .and_then(|node| node.attribute("URI"))
+            .map(|s| s.to_string())
+            .ok_or_else(|| "EncryptedData missing CipherReference URI".to_string())?;
+
+        // Extract compression info from EncryptionProperties/EncryptionProperty/Compression
+        // Method="8" means deflate compression, Method="0" means no compression
+        let (is_compressed, original_length) =
+            if let Some(compression) = find_element(encrypted_data, "Compression") {
+                let method = compression.attribute("Method").unwrap_or("0");
+                let is_compressed = method == "8";
+
+                let original_length = compression
+                    .attribute("OriginalLength")
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(0);
+
+                (is_compressed, original_length)
+            } else {
+                // Default: assume not compressed, unknown length
+                (false, 0)
+            };
+
+        resources.push(EncryptedFileInfo {
+            uri,
+            is_compressed,
+            original_length,
+        });
+    }
+
+    Ok(resources)
 }
 
 // =============================================================================
@@ -444,5 +503,116 @@ mod tests {
         let chapter = items.iter().find(|i| i.id == "chapter1").unwrap();
         assert!(!chapter.is_cover);
         assert!(!chapter.is_encryption_exempt());
+    }
+
+    #[test]
+    fn test_parse_encryption_xml() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<encryption
+    xmlns="urn:oasis:names:tc:opendocument:xmlns:container"
+    xmlns:enc="http://www.w3.org/2001/04/xmlenc#"
+    xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+    <enc:EncryptedData>
+        <enc:EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes256-cbc"/>
+        <ds:KeyInfo>
+            <ds:RetrievalMethod URI="license.lcpl#/encryption/content_key"
+                Type="http://readium.org/2014/01/lcp#EncryptedContentKey"/>
+        </ds:KeyInfo>
+        <enc:CipherData>
+            <enc:CipherReference URI="OEBPS/chapter1.xhtml"/>
+        </enc:CipherData>
+        <enc:EncryptionProperties>
+            <enc:EncryptionProperty xmlns:ns="http://www.idpf.org/2016/encryption#compression">
+                <ns:Compression Method="8" OriginalLength="12345"/>
+            </enc:EncryptionProperty>
+        </enc:EncryptionProperties>
+    </enc:EncryptedData>
+    <enc:EncryptedData>
+        <enc:EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes256-cbc"/>
+        <ds:KeyInfo>
+            <ds:RetrievalMethod URI="license.lcpl#/encryption/content_key"
+                Type="http://readium.org/2014/01/lcp#EncryptedContentKey"/>
+        </ds:KeyInfo>
+        <enc:CipherData>
+            <enc:CipherReference URI="OEBPS/image.jpg"/>
+        </enc:CipherData>
+        <enc:EncryptionProperties>
+            <enc:EncryptionProperty xmlns:ns="http://www.idpf.org/2016/encryption#compression">
+                <ns:Compression Method="0" OriginalLength="67890"/>
+            </enc:EncryptionProperty>
+        </enc:EncryptionProperties>
+    </enc:EncryptedData>
+</encryption>"#;
+
+        let resources = parse_encryption_xml(xml).unwrap();
+        assert_eq!(resources.len(), 2);
+
+        // First resource: compressed chapter
+        let chapter = &resources[0];
+        assert_eq!(chapter.uri, "OEBPS/chapter1.xhtml");
+        assert!(chapter.is_compressed);
+        assert_eq!(chapter.original_length, 12345);
+
+        // Second resource: uncompressed image
+        let image = &resources[1];
+        assert_eq!(image.uri, "OEBPS/image.jpg");
+        assert!(!image.is_compressed);
+        assert_eq!(image.original_length, 67890);
+    }
+
+    #[test]
+    fn test_parse_encryption_xml_missing_compression() {
+        // Test that missing compression info uses defaults
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<encryption
+    xmlns="urn:oasis:names:tc:opendocument:xmlns:container"
+    xmlns:enc="http://www.w3.org/2001/04/xmlenc#"
+    xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+    <enc:EncryptedData>
+        <enc:EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes256-cbc"/>
+        <enc:CipherData>
+            <enc:CipherReference URI="OEBPS/chapter1.xhtml"/>
+        </enc:CipherData>
+    </enc:EncryptedData>
+</encryption>"#;
+
+        let resources = parse_encryption_xml(xml).unwrap();
+        assert_eq!(resources.len(), 1);
+
+        let chapter = &resources[0];
+        assert_eq!(chapter.uri, "OEBPS/chapter1.xhtml");
+        // Defaults when compression info is missing
+        assert!(!chapter.is_compressed);
+        assert_eq!(chapter.original_length, 0);
+    }
+
+    #[test]
+    fn test_parse_encryption_xml_roundtrip() {
+        // Test that write_encryption_xml output can be parsed by parse_encryption_xml
+        let files = vec![
+            EncryptedFileInfo {
+                uri: "OEBPS/chapter1.xhtml".to_string(),
+                is_compressed: true,
+                original_length: 12345,
+            },
+            EncryptedFileInfo {
+                uri: "OEBPS/image.jpg".to_string(),
+                is_compressed: false,
+                original_length: 67890,
+            },
+        ];
+
+        let xml = write_encryption_xml(&files);
+        let resources = parse_encryption_xml(&xml).unwrap();
+
+        assert_eq!(resources.len(), 2);
+
+        assert_eq!(resources[0].uri, "OEBPS/chapter1.xhtml");
+        assert!(resources[0].is_compressed);
+        assert_eq!(resources[0].original_length, 12345);
+
+        assert_eq!(resources[1].uri, "OEBPS/image.jpg");
+        assert!(!resources[1].is_compressed);
+        assert_eq!(resources[1].original_length, 67890);
     }
 }

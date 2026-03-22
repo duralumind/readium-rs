@@ -34,7 +34,7 @@ pub fn encrypt_epub(
     });
 
     println!("Encrypting EPUB:");
-    println!("  Input:    {}", input.display());
+    println!("  Input:    {:?}", input.canonicalize());
     println!("  Output:   {}", output_path.display());
     println!("  Profile:  {:?}", profile);
 
@@ -72,10 +72,10 @@ pub fn encrypt_epub(
 
 pub fn decrypt_epub(
     input: PathBuf,
-    _password: String,
+    password: String,
     profile: EncryptionProfile,
     output: Option<PathBuf>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), String> {
     let output_path = output.unwrap_or_else(|| {
         let stem = input.file_stem().unwrap_or_default().to_string_lossy();
         input.with_file_name(format!("{}.decrypted.epub", stem))
@@ -86,7 +86,23 @@ pub fn decrypt_epub(
     println!("  Output:   {}", output_path.display());
     println!("  Profile:  {:?}", profile);
 
-    todo!("Implement EPUB decryption")
+    // step 1: parse the epub file and get the license
+    let mut epub = Epub::new(input)?;
+    let license = epub
+        .license()
+        .ok_or("Encrypted epub must contain license file".to_string())?;
+    // step 2: do the key check and decrypt the content key
+    let passphrase = UserPassphrase(password);
+    let user_encryption_key =
+        UserEncryptionKey::new(passphrase, crypto::key::HashAlgorithm::Sha256, profile);
+    license.key_check(&user_encryption_key)?;
+    let content_key = license.decrypt_content_key(&user_encryption_key)?;
+    // step 3: create and write decrypted epub
+    let decrypted_epub = epub.create_decrypted_epub(output_path, &content_key)?;
+    decrypted_epub
+        .finish()
+        .map_err(|e| format!("Failed to write decrypted epub: {}", e))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -95,12 +111,20 @@ mod tests {
 
     #[test]
     fn testing_encryption_full() {
-        encrypt_epub(
-            PathBuf::from("/Users/work/company/lcp_stuff/readium-rs/samples/way_of_kings.epub"),
+        let _ = encrypt_epub(
+            PathBuf::from("samples/way_of_kings.epub"),
             "test123".to_string(),
             "password is test123".to_string(),
             EncryptionProfile::Basic,
-            None,
-        );
+            Some(PathBuf::from("samples/way_of_kings_encrypted.epub")),
+        )
+        .unwrap();
+        let _ = decrypt_epub(
+            PathBuf::from("samples/way_of_kings_encrypted.epub"),
+            "test123".to_string(),
+            EncryptionProfile::Basic,
+            Some(PathBuf::from("samples/way_of_kings_decrypted.epub")),
+        )
+        .unwrap();
     }
 }

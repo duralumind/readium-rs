@@ -7,14 +7,14 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::crypto::cipher::aes_cbc256;
+use crate::crypto::key::{ContentKey, EncryptedContentKey, UserEncryptionKey};
 use crate::crypto::signature::{RSA_SHA256_ALGORITHM, sign_license};
-use crate::crypto::{cipher, key};
 use crate::epub;
+use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, FixedOffset, Utc};
 use encoding::{certificate_format, date_format, optional_date_format};
 use serde_derive::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::ops::Not;
 use x509_cert::Certificate;
@@ -243,61 +243,35 @@ impl License {
         })
     }
 
-    pub fn key_check(&self, passphrase: &str) -> Result<([u8; 32], [u8; 16]), String> {
-        let user_key: [u8; 32] = Sha256::digest(&passphrase).into();
-        use base64::{Engine as _, engine::general_purpose};
-
+    /// Check that the `key_check` bytes decrypted with the user encryption key is
+    /// the license id.
+    ///
+    /// This check is part of the validity conditions for a License document.
+    pub fn key_check(&self, user_key: &UserEncryptionKey) -> Result<(), String> {
         let key_check_bytes = general_purpose::STANDARD
             .decode(&self.encryption.user_key.key_check)
             .map_err(|e| format!("Base64 decode failed, err: {:?}", e))?;
 
-        let iv: [u8; 16] = key_check_bytes[0..16]
-            .try_into()
-            .map_err(|_| "Not enough key_check bytes".to_string())?;
-
-        let ciphertext: &[u8] = &key_check_bytes[16..];
         let decrypted_bytes =
-            cipher::aes_cbc256::decrypt_aes_256_cbc(ciphertext, &user_key, &iv).unwrap();
+            crate::crypto::cipher::aes_cbc256::decrypt_aes_256_cbc_with_prepended_iv(
+                &key_check_bytes,
+                user_key.key(),
+            )?;
+
         if decrypted_bytes.as_slice() == self.id.as_bytes() {
-            return Ok((user_key, iv));
+            return Ok(());
         } else {
             return Err("key check failed".to_string());
         }
     }
 
-    pub fn decrypt_content_key(&self, user_key: &[u8; 32]) -> Result<[u8; 32], String> {
-        use base64::{Engine as _, engine::general_purpose};
-
+    /// Decrypt the content key from the `encrypted_value` in the license to decrypt the actual
+    /// content of the epub publication.
+    pub fn decrypt_content_key(&self, user_key: &UserEncryptionKey) -> Result<ContentKey, String> {
         // Base64-decode the encrypted content key
-        let encrypted_key_bytes = general_purpose::STANDARD
-            .decode(&self.encryption.content_key.encrypted_value)
-            .map_err(|e| format!("Base64 decode of content key failed, err: {:?}", e))?;
-
-        // Extract IV from first 16 bytes
-        let iv: [u8; 16] = encrypted_key_bytes[0..16]
-            .try_into()
-            .map_err(|_| "Not enough bytes for IV in encrypted content key".to_string())?;
-
-        // Extract ciphertext from remaining bytes (after IV)
-        let ciphertext: &[u8] = &encrypted_key_bytes[16..];
-
-        // Decrypt using user key
-        let decrypted_key = cipher::aes_cbc256::decrypt_aes_256_cbc(ciphertext, user_key, &iv)
-            .map_err(|e| format!("Failed to decrypt content key: {}", e))?;
-
-        // Validate that decrypted key is exactly 32 bytes (AES-256 key size)
-        if decrypted_key.len() != 32 {
-            return Err(format!(
-                "Decrypted content key has invalid length: expected 32 bytes, got {}",
-                decrypted_key.len()
-            ));
-        }
-
-        // Convert to [u8; 32] array
-        let content_key: [u8; 32] = decrypted_key
-            .try_into()
-            .map_err(|_| "Failed to convert decrypted content key to array".to_string())?;
-
+        let encrypted_content_key =
+            EncryptedContentKey::new_from_raw_bytes(&self.encryption.content_key.encrypted_value)?;
+        let content_key = ContentKey::decrypt_content_key(&encrypted_content_key, user_key)?;
         Ok(content_key)
     }
 }
@@ -342,8 +316,8 @@ impl LicenseBuilder {
     /// Sets the encryption related fields on the license.
     pub fn encryption(
         mut self,
-        encrypted_key: &key::EncryptedContentKey,
-        user_key: &key::UserEncryptionKey,
+        encrypted_key: &EncryptedContentKey,
+        user_key: &UserEncryptionKey,
         hint: String,
     ) -> Self {
         self.0.encryption.content_key.encrypted_value = encrypted_key.to_base64();

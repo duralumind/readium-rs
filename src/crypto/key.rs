@@ -1,4 +1,5 @@
 use super::cipher;
+use base64::{Engine as _, engine::general_purpose};
 use rand::{TryRngCore, rngs::OsRng};
 use serde_derive::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -67,6 +68,21 @@ impl ContentKey {
     pub fn key(&self) -> &[u8; 32] {
         &self.0
     }
+
+    /// Decrypt the original content key using the user passphrase and the key transform.
+    pub fn decrypt_content_key(
+        encrypted_key: &EncryptedContentKey,
+        user_key: &UserEncryptionKey,
+    ) -> Result<Self, String> {
+        let decrypted = cipher::aes_cbc256::decrypt_aes_256_cbc(
+            encrypted_key.key(),
+            user_key.key(),
+            encrypted_key.iv(),
+        )?;
+        let mut content_key = [0; 32];
+        content_key.copy_from_slice(&decrypted);
+        Ok(ContentKey(content_key))
+    }
 }
 
 /// Represents a [`ContentKey`] that has been encrypted using the [`UserEncryptionKey`].
@@ -81,6 +97,28 @@ pub struct EncryptedContentKey {
 }
 
 impl EncryptedContentKey {
+    /// Create an [`EncryptedContentKey`] by decoding raw bytes.
+    pub fn new_from_raw_bytes(base64_encrypted_key: &str) -> Result<Self, String> {
+        let encrypted_key_bytes = general_purpose::STANDARD
+            .decode(base64_encrypted_key)
+            .map_err(|e| format!("Base64 decode of content key failed, err: {:?}", e))?;
+
+        if encrypted_key_bytes.len() != 64 {
+            return Err(format!(
+                "Expected 64 bytes for encrypted content key, got {}",
+                encrypted_key_bytes.len()
+            ));
+        }
+        let (iv_slice, key_slice) = encrypted_key_bytes.split_at(16);
+        let key = key_slice
+            .try_into()
+            .map_err(|_| "Failed to extract key bytes".to_string())?;
+        let iv = iv_slice
+            .try_into()
+            .map_err(|_| "Failed to extract iv bytes".to_string())?;
+
+        Ok(Self { key, iv })
+    }
     /// Create an [`EncryptedContentKey`] by encrypting the [`ContentKey`] with a
     /// [`UserPassphrase`].
     ///
@@ -109,6 +147,14 @@ impl EncryptedContentKey {
         Self { key, iv }
     }
 
+    pub fn key(&self) -> &[u8; 48] {
+        &self.key
+    }
+
+    pub fn iv(&self) -> &[u8; 16] {
+        &self.iv
+    }
+
     /// Decrypt the original content key using the user passphrase and the key transform.
     pub fn decrypt_content_key(
         &self,
@@ -125,8 +171,6 @@ impl EncryptedContentKey {
 
     /// Encodes the encrypted content key in base64 format (IV || ciphertext)
     pub fn to_base64(&self) -> String {
-        use base64::{Engine as _, engine::general_purpose};
-
         // Concatenate IV + encrypted key (LCP format)
         let mut data = Vec::with_capacity(16 + self.key.len());
         data.extend_from_slice(&self.iv);

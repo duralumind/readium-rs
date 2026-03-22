@@ -13,11 +13,11 @@ pub mod xml_utils;
 
 pub use xml_utils::{
     EncryptedFileInfo, ManifestItem, find_element_attr, get_opf_base_path, parse_container_xml,
-    parse_opf_manifest, write_encryption_xml,
+    parse_encryption_xml, parse_opf_manifest, write_encryption_xml,
 };
 
 use flate2::Compression;
-use flate2::write::DeflateEncoder;
+use flate2::write::{DeflateDecoder, DeflateEncoder};
 use std::io::Write;
 
 /// Compress data using the Deflate algorithm.
@@ -25,6 +25,13 @@ pub fn deflate_compress(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(data)?;
     encoder.finish()
+}
+
+/// Compress data using the Deflate algorithm.
+pub fn deflate_uncompress(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+    let mut decoder = DeflateDecoder::new(Vec::new());
+    decoder.write_all(data)?;
+    decoder.finish()
 }
 
 /// Filenames for specific metadata files
@@ -109,8 +116,6 @@ impl Epub {
 
     /// Creates and returns a new zip archive in the given output path with the metadata files from the
     /// orginal archive and the encrypted content files.
-    ///
-    /// The
     pub fn create_encrypted_epub(
         &mut self,
         output: PathBuf,
@@ -268,13 +273,102 @@ impl Epub {
             }
 
             // Copy everything else
-            dbg!(&file.name());
             writer
                 .raw_copy_file(file)
                 .map_err(|e| format!("Failed to copy {}: {}", name, e))?;
         }
 
         Ok(items_to_encrypt)
+    }
+
+    /// Creates and returns a new zip archive in the given output path with the encrypted data decrypted
+    /// and then written into the same path as the original.
+    pub fn create_decrypted_epub(
+        &mut self,
+        output: PathBuf,
+        content_key: &ContentKey,
+    ) -> Result<ZipWriter<File>, String> {
+        // Create the writer
+        let output = File::create(output).map_err(|e| format!("Unable to open file {}", e))?;
+        let mut writer = ZipWriter::new(output);
+        let opf_path = self.opf_path()?;
+        let base_path = get_opf_base_path(&opf_path);
+        let mut decrypted_files = HashSet::new();
+
+        // Decrypt and write decrypted files
+        for encrypted_file in self.encrypted_resources()?.iter() {
+            let data = read_binary_from_archive(&mut self.archive, &encrypted_file.uri)?.ok_or(
+                format!("Invalid path in encryption.xml: {:?}", &encrypted_file),
+            )?;
+
+            let decrypted_data = decrypt_aes_256_cbc_with_prepended_iv(&data, content_key.key())?;
+
+            let uncompressed_decrypted_data = if !encrypted_file.is_compressed {
+                decrypted_data
+            } else {
+                deflate_uncompress(&decrypted_data)
+                    .map_err(|e| format!("Deflate write error: {:?}", e))?
+            };
+            if uncompressed_decrypted_data.len() != encrypted_file.original_length {
+                return Err(format!(
+                    "Incorrect decrypted length. original: {}, decrypted: {}",
+                    encrypted_file.original_length,
+                    uncompressed_decrypted_data.len()
+                ));
+            }
+            // no need to compress already compressed files
+            let options =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            let path = format!("{}{}", base_path, encrypted_file.uri);
+            decrypted_files.insert(path.clone());
+            writer
+                .start_file(&path, options)
+                .map_err(|e| format!("Failed to start file {}", e))?;
+
+            writer
+                .write_all(&uncompressed_decrypted_data)
+                .map_err(|e| format!("Failed to write to file {}", e))?;
+        }
+        // Copy all remaining non encrypted files from reader to writer
+        // Copy all other files that don't need encryption
+        for i in 0..self.archive.len() {
+            let file = self
+                .archive
+                .by_index(i)
+                .map_err(|e| format!("Failed to read archive entry {}: {}", i, e))?;
+            let name = file.name().to_string();
+            // Skip files that we don't need in decrypted epub
+            if name == ENCRYPTION_FILE || name == LICENSE_FILE {
+                continue;
+            }
+            // Skip files that we decrypted already
+            if decrypted_files.contains(&name) {
+                continue;
+            }
+            // Copy everything else
+            writer
+                .raw_copy_file(file)
+                .map_err(|e| format!("Failed to copy {}: {}", name, e))?;
+        }
+
+        Ok(writer)
+    }
+
+    /// Returns a list of encrypted resources from encryption.xml.
+    ///
+    /// This parses the `META-INF/encryption.xml` file and returns information
+    /// about each encrypted file, including its path, compression status,
+    /// and original length.
+    ///
+    /// Returns an error if the EPUB doesn't have an encryption.xml file
+    /// or if the file cannot be parsed.
+    pub fn encrypted_resources(&self) -> Result<Vec<EncryptedFileInfo>, String> {
+        let encryption_xml = self
+            .encryption
+            .as_ref()
+            .ok_or_else(|| "EPUB does not contain encryption.xml".to_string())?;
+
+        parse_encryption_xml(encryption_xml)
     }
 }
 
