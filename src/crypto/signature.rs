@@ -4,17 +4,17 @@
 //! - Algorithm: `http://www.w3.org/2001/04/xmldsig-more#rsa-sha256`
 //! - The canonical JSON of the license (minus signature) is signed using PKCS#1 v1.5 with SHA-256
 
-use base64::{engine::general_purpose, Engine};
+use base64::{Engine, engine::general_purpose};
 use rsa::{
+    RsaPrivateKey, RsaPublicKey,
     pkcs1v15::{SigningKey, VerifyingKey},
     signature::{SignatureEncoding, Signer, Verifier},
-    RsaPrivateKey, RsaPublicKey,
 };
 use sha2::Sha256;
 use thiserror::Error;
 use x509_cert::{
-    der::{Decode, Encode},
     Certificate,
+    der::{Decode, Encode},
 };
 
 /// The algorithm URI for RSA-SHA256 as defined in XML-SIG

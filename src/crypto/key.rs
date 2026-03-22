@@ -1,6 +1,6 @@
 use super::cipher;
-use base64::{engine::general_purpose, Engine as _};
-use rand::{rngs::OsRng, TryRngCore};
+use base64::{Engine as _, engine::general_purpose};
+use rand::{TryRngCore, rngs::OsRng};
 use serde_derive::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;

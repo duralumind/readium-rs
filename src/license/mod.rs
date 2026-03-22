@@ -9,9 +9,9 @@ use uuid::Uuid;
 
 use crate::crypto::cipher::aes_cbc256;
 use crate::crypto::key::{ContentKey, EncryptedContentKey, UserEncryptionKey};
-use crate::crypto::signature::{sign_license, RSA_SHA256_ALGORITHM};
+use crate::crypto::signature::{RSA_SHA256_ALGORITHM, sign_license};
 use crate::epub;
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, FixedOffset, Utc};
 use encoding::{certificate_format, date_format, optional_date_format};
 use serde_derive::{Deserialize, Serialize};
@@ -368,7 +368,7 @@ impl LicenseBuilder {
         let key_check =
             aes_cbc256::encrypt_aes_256_cbc_with_random_iv(self.0.id.as_bytes(), user_key.key());
         self.0.encryption.user_key.text_hint = hint;
-        use base64::{engine::general_purpose, Engine as _};
+        use base64::{Engine as _, engine::general_purpose};
         self.0.encryption.user_key.key_check = general_purpose::STANDARD.encode(&key_check);
         self
     }

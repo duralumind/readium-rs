@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::io::Seek;
 use std::{fs::File, io::Read, path::PathBuf};
 use thiserror::Error;
-use zip::write::{SimpleFileOptions, ZipWriter};
 use zip::ZipArchive;
+use zip::write::{SimpleFileOptions, ZipWriter};
 
 use crate::{
     crypto::{cipher::aes_cbc256::*, key::ContentKey},
@@ -13,12 +13,12 @@ use crate::{
 pub mod xml_utils;
 
 pub use xml_utils::{
-    find_element_attr, get_opf_base_path, parse_container_xml, parse_encryption_xml,
-    parse_opf_manifest, write_encryption_xml, EncryptedFileInfo, ManifestItem,
+    EncryptedFileInfo, ManifestItem, find_element_attr, get_opf_base_path, parse_container_xml,
+    parse_encryption_xml, parse_opf_manifest, write_encryption_xml,
 };
 
-use flate2::write::{DeflateDecoder, DeflateEncoder};
 use flate2::Compression;
+use flate2::write::{DeflateDecoder, DeflateEncoder};
 use std::io::Write;
 
 /// Errors that can occur during EPUB operations.

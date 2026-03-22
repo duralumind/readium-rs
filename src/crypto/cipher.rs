@@ -11,12 +11,12 @@ pub enum CipherError {
 pub mod aes_cbc256 {
     use super::CipherError;
     use aes::{
-        cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit},
         Aes256,
+        cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit},
     };
     use block_padding::Pkcs7;
     use cbc::{Decryptor, Encryptor};
-    use rand::{rngs::OsRng, TryRngCore};
+    use rand::{TryRngCore, rngs::OsRng};
 
     type Aes256CbcEnc = Encryptor<Aes256>;
     type Aes256CbcDec = Decryptor<Aes256>;
