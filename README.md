@@ -32,30 +32,16 @@ This library provides DRM (Digital Rights Management) functionality for EPUB fil
 
 1. **Basic Profile Implementation**: Core LCP functionality following the Readium specification
 2. **Extensible Profiles**: Extension traits to support different encryption profiles beyond basic
-3. **Memory Safety**: Secure memory handling with zeroize for sensitive key material
 
 ## Current State
 
 - License parsing: Complete
 - Key derivation (SHA-256): Complete
 - Content decryption (AES-256-CBC): Complete
-- Profile abstraction traits: In Progress
-- Signature verification: Not implemented
+- Profile abstraction traits: Complete
+- Signature verification: Complete
 - LSD (License Status Document): Not implemented
 
-## Key Files
-
-- `src/lib.rs` - Library entry point, top-level encrypt/decrypt API
-- `src/main.rs` - CLI test tool
-- `src/license/mod.rs` - License document structures and builder
-- `src/license/encoding.rs` - Serde helpers for dates and X.509 certificates
-- `src/license/profile.rs` - Encryption profile definitions
-- `src/crypto/mod.rs` - Crypto module root
-- `src/crypto/cipher.rs` - AES-256-CBC cryptographic operations
-- `src/crypto/key.rs` - User passphrase and content key handling
-- `src/crypto/transform.rs` - Extension trait for encryption profiles
-- `src/epub/mod.rs` - EPUB file operations (read, encrypt, write)
-- `src/epub/xml_utils.rs` - XML/OPF parsing and encryption.xml generation
 
 ## References
 
