@@ -1,4 +1,4 @@
-# Readium-rs
+# lcp-rs
 
 This is a Rust implementation of the Readium LCP (Licensed Content Protection) [specification](https://readium.org/lcp-specs/). 
 The project implements the **basic profile** with extension traits designed to support different encryption profiles.
