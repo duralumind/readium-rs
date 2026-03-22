@@ -10,13 +10,41 @@ use crate::{
     epub::Epub,
     license::LicenseBuilder,
 };
+use thiserror::Error;
 
 /// This is the trait that needs to be implemented to support additional
 /// production profiles. See docs for details.
 pub use crypto::transform::Transform;
 
+// Re-export module-specific error types
+pub use crypto::cipher::CipherError;
+pub use crypto::key::KeyError;
+pub use crypto::signature::SignatureError;
+pub use epub::EpubError;
+pub use license::LicenseError;
+
 use license::EncryptionProfile;
 use std::path::PathBuf;
+
+/// Unified error type for the readium-rs library.
+#[derive(Debug, Error)]
+pub enum Error {
+    /// Error from EPUB operations
+    #[error(transparent)]
+    Epub(#[from] EpubError),
+    /// Error from license operations
+    #[error(transparent)]
+    License(#[from] LicenseError),
+    /// Error from signature operations
+    #[error(transparent)]
+    Signature(#[from] SignatureError),
+    /// Error from cipher operations
+    #[error(transparent)]
+    Cipher(#[from] CipherError),
+    /// Error from key operations
+    #[error(transparent)]
+    Key(#[from] KeyError),
+}
 
 const PROVIDER_CERT_DER: &[u8] = include_bytes!("../certs/provider.der");
 const PROVIDER_PRIVATE_KEY_DER: &[u8] = include_bytes!("../certs/provider_private.der");
@@ -27,7 +55,7 @@ pub fn encrypt_epub(
     password_hint: String,
     profile: EncryptionProfile,
     output: Option<PathBuf>,
-) -> Result<(), String> {
+) -> Result<(), Error> {
     let output_path = output.unwrap_or_else(|| {
         let stem = input.file_stem().unwrap_or_default().to_string_lossy();
         input.with_file_name(format!("{}.encrypted.epub", stem))
@@ -50,20 +78,16 @@ pub fn encrypt_epub(
     let content_key = ContentKey::generate();
     let encrypted_content_key = EncryptedContentKey::new(content_key.clone(), passphrase, profile);
     // step 3: encrypt all required content and return a new epub
-    let encrypted_epub = epub
-        .create_encrypted_epub(output_path, &content_key)
-        .unwrap();
+    let encrypted_epub = epub.create_encrypted_epub(output_path, &content_key)?;
     // step 4: generate lcpl file, embed in encrypted epub
     let private_key =
-        load_private_key_from_der(PROVIDER_PRIVATE_KEY_DER).expect("Failed to load private key");
+        load_private_key_from_der(PROVIDER_PRIVATE_KEY_DER).map_err(Error::Signature)?;
     let provider_certificate =
-        load_certificate_from_der(PROVIDER_CERT_DER).expect("Failed to load provider certificate");
+        load_certificate_from_der(PROVIDER_CERT_DER).map_err(Error::Signature)?;
     let license = LicenseBuilder::new()
         .encryption(&encrypted_content_key, &user_key, password_hint)
-        .sign(&private_key, &provider_certificate)
-        .map_err(|e| format!("Failed to sign license {}", e))?
-        .build()
-        .map_err(|e| format!("Failed to build license {}", e))?;
+        .sign(&private_key, &provider_certificate)?
+        .build()?;
 
     Epub::embed_license_and_write(encrypted_epub, &license)?;
 
@@ -75,7 +99,7 @@ pub fn decrypt_epub(
     password: String,
     profile: EncryptionProfile,
     output: Option<PathBuf>,
-) -> Result<(), String> {
+) -> Result<(), Error> {
     let output_path = output.unwrap_or_else(|| {
         let stem = input.file_stem().unwrap_or_default().to_string_lossy();
         input.with_file_name(format!("{}.decrypted.epub", stem))
@@ -90,7 +114,7 @@ pub fn decrypt_epub(
     let mut epub = Epub::new(input)?;
     let license = epub
         .license()
-        .ok_or("Encrypted epub must contain license file".to_string())?;
+        .ok_or(EpubError::MissingRequiredFile("license.lcpl".to_string()))?;
     // step 2: do the key check and decrypt the content key
     let passphrase = UserPassphrase(password);
     let user_encryption_key =
@@ -101,7 +125,7 @@ pub fn decrypt_epub(
     let decrypted_epub = epub.create_decrypted_epub(output_path, &content_key)?;
     decrypted_epub
         .finish()
-        .map_err(|e| format!("Failed to write decrypted epub: {}", e))?;
+        .map_err(|e| EpubError::WriteFailed(format!("Failed to write decrypted epub: {}", e)))?;
     Ok(())
 }
 

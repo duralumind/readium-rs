@@ -4,13 +4,14 @@ pub mod profile;
 pub use profile::EncryptionProfile;
 use rsa::RsaPrivateKey;
 use std::collections::HashMap;
+use thiserror::Error;
 use uuid::Uuid;
 
 use crate::crypto::cipher::aes_cbc256;
 use crate::crypto::key::{ContentKey, EncryptedContentKey, UserEncryptionKey};
-use crate::crypto::signature::{RSA_SHA256_ALGORITHM, sign_license};
+use crate::crypto::signature::{sign_license, RSA_SHA256_ALGORITHM};
 use crate::epub;
-use base64::{Engine as _, engine::general_purpose};
+use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, FixedOffset, Utc};
 use encoding::{certificate_format, date_format, optional_date_format};
 use serde_derive::{Deserialize, Serialize};
@@ -18,6 +19,32 @@ use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::ops::Not;
 use x509_cert::Certificate;
+
+/// Errors that can occur during license operations.
+#[derive(Debug, Error)]
+pub enum LicenseError {
+    /// Serialization/deserialization failed
+    #[error("Serialization failed: {0}")]
+    SerializationFailed(String),
+    /// Key check verification failed
+    #[error("Key check failed: user key does not match license")]
+    KeyCheckFailed,
+    /// Base64 decoding failed
+    #[error("Base64 decode failed: {0}")]
+    Base64DecodeFailed(String),
+    /// License signing failed
+    #[error("Signing failed: {0}")]
+    SigningFailed(String),
+    /// License must be signed before building
+    #[error("License must be signed before building")]
+    MissingSignature,
+    /// Content key decryption failed
+    #[error("Content key decryption failed: {0}")]
+    ContentKeyDecryptionFailed(String),
+    /// Cipher operation failed
+    #[error("Cipher operation failed: {0}")]
+    CipherFailed(String),
+}
 
 pub const DEFAULT_PROVIDER: &str = "https://www.duralumind.com";
 pub const DEFAULT_HASH_ALGORITHM: &str = "http://www.w3.org/2001/04/xmlenc#sha256";
@@ -218,10 +245,10 @@ impl License {
         LicenseBuilder::new()
     }
 
-    pub fn canonical_json(&self) -> Result<String, String> {
+    pub fn canonical_json(&self) -> Result<String, LicenseError> {
         // First, serialize to JSON Value to manipulate the structure
-        let mut value =
-            serde_json::to_value(self).map_err(|e| format!("Failed to convert to value {}", e))?;
+        let mut value = serde_json::to_value(self)
+            .map_err(|e| LicenseError::SerializationFailed(format!("{}", e)))?;
 
         // Remove the signature field as per rule 1
         if let Value::Object(ref mut map) = value {
@@ -233,7 +260,7 @@ impl License {
 
         // Serialize without pretty printing (removes non-significant whitespace)
         serde_json::to_string(&canonical_value)
-            .map_err(|e| format!("Failed to convert canonical json to string {}", e))
+            .map_err(|e| LicenseError::SerializationFailed(format!("{}", e)))
     }
 
     pub fn publication_link(&self) -> Option<String> {
@@ -252,31 +279,37 @@ impl License {
     /// the license id.
     ///
     /// This check is part of the validity conditions for a License document.
-    pub fn key_check(&self, user_key: &UserEncryptionKey) -> Result<(), String> {
+    pub fn key_check(&self, user_key: &UserEncryptionKey) -> Result<(), LicenseError> {
         let key_check_bytes = general_purpose::STANDARD
             .decode(&self.encryption.user_key.key_check)
-            .map_err(|e| format!("Base64 decode failed, err: {:?}", e))?;
+            .map_err(|e| LicenseError::Base64DecodeFailed(format!("{:?}", e)))?;
 
         let decrypted_bytes =
             crate::crypto::cipher::aes_cbc256::decrypt_aes_256_cbc_with_prepended_iv(
                 &key_check_bytes,
                 user_key.key(),
-            )?;
+            )
+            .map_err(|e| LicenseError::CipherFailed(e.to_string()))?;
 
         if decrypted_bytes.as_slice() == self.id.as_bytes() {
             Ok(())
         } else {
-            Err("key check failed".to_string())
+            Err(LicenseError::KeyCheckFailed)
         }
     }
 
     /// Decrypt the content key from the `encrypted_value` in the license to decrypt the actual
     /// content of the epub publication.
-    pub fn decrypt_content_key(&self, user_key: &UserEncryptionKey) -> Result<ContentKey, String> {
+    pub fn decrypt_content_key(
+        &self,
+        user_key: &UserEncryptionKey,
+    ) -> Result<ContentKey, LicenseError> {
         // Base64-decode the encrypted content key
         let encrypted_content_key =
-            EncryptedContentKey::new_from_raw_bytes(&self.encryption.content_key.encrypted_value)?;
-        let content_key = ContentKey::decrypt_content_key(&encrypted_content_key, user_key)?;
+            EncryptedContentKey::new_from_raw_bytes(&self.encryption.content_key.encrypted_value)
+                .map_err(|e| LicenseError::ContentKeyDecryptionFailed(e.to_string()))?;
+        let content_key = ContentKey::decrypt_content_key(&encrypted_content_key, user_key)
+            .map_err(|e| LicenseError::ContentKeyDecryptionFailed(e.to_string()))?;
         Ok(content_key)
     }
 }
@@ -335,7 +368,7 @@ impl LicenseBuilder {
         let key_check =
             aes_cbc256::encrypt_aes_256_cbc_with_random_iv(self.0.id.as_bytes(), user_key.key());
         self.0.encryption.user_key.text_hint = hint;
-        use base64::{Engine as _, engine::general_purpose};
+        use base64::{engine::general_purpose, Engine as _};
         self.0.encryption.user_key.key_check = general_purpose::STANDARD.encode(&key_check);
         self
     }
@@ -345,9 +378,9 @@ impl LicenseBuilder {
         mut self,
         private_key: &RsaPrivateKey,
         provider_certificate: &Certificate,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, LicenseError> {
         let signature = sign_license(self.0.canonical_json()?.as_bytes(), private_key)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| LicenseError::SigningFailed(e.to_string()))?;
         let sig = Signature {
             algorithm: RSA_SHA256_ALGORITHM.to_string(),
             certificate: provider_certificate.clone(),
@@ -362,9 +395,9 @@ impl LicenseBuilder {
     //   self
     //  }
 
-    pub fn build(self) -> Result<License, String> {
+    pub fn build(self) -> Result<License, LicenseError> {
         if self.0.signature.is_none() {
-            return Err("License doesn't have signature, call sign first".to_string());
+            return Err(LicenseError::MissingSignature);
         }
         Ok(self.0)
     }

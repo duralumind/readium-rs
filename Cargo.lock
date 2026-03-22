@@ -1133,6 +1133,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "sha2",
+ "thiserror",
  "uuid",
  "x509-cert",
  "zeroize",

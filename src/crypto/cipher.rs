@@ -1,11 +1,22 @@
+use thiserror::Error;
+
+/// Errors that can occur during cipher operations.
+#[derive(Debug, Error)]
+pub enum CipherError {
+    /// Decryption operation failed
+    #[error("Decryption failed: {0}")]
+    DecryptionFailed(String),
+}
+
 pub mod aes_cbc256 {
+    use super::CipherError;
     use aes::{
-        Aes256,
         cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit},
+        Aes256,
     };
     use block_padding::Pkcs7;
     use cbc::{Decryptor, Encryptor};
-    use rand::{TryRngCore, rngs::OsRng};
+    use rand::{rngs::OsRng, TryRngCore};
 
     type Aes256CbcEnc = Encryptor<Aes256>;
     type Aes256CbcDec = Decryptor<Aes256>;
@@ -33,13 +44,13 @@ pub mod aes_cbc256 {
         ciphertext: &[u8],
         key: &[u8; 32],
         iv: &[u8; 16],
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<Vec<u8>, CipherError> {
         let decryptor = Aes256CbcDec::new(key.into(), iv.into());
 
         let mut buf = ciphertext.to_vec();
         let decrypted_data = decryptor
             .decrypt_padded_mut::<Pkcs7>(&mut buf)
-            .map_err(|e| format!("Decryption failed: {:?}", e))?;
+            .map_err(|e| CipherError::DecryptionFailed(format!("{:?}", e)))?;
 
         Ok(decrypted_data.to_vec())
     }
@@ -47,7 +58,7 @@ pub mod aes_cbc256 {
     pub fn decrypt_aes_256_cbc_with_prepended_iv(
         ciphertext: &[u8],
         key: &[u8; 32],
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<Vec<u8>, CipherError> {
         let mut ciphertext = ciphertext.to_vec();
         // iv is the first 16 bytes
         let mut iv = [0; 16];
@@ -57,7 +68,7 @@ pub mod aes_cbc256 {
 
         let decrypted_data = decryptor
             .decrypt_padded_mut::<Pkcs7>(&mut ciphertext[16..])
-            .map_err(|e| format!("Decryption failed: {:?}", e))?;
+            .map_err(|e| CipherError::DecryptionFailed(format!("{:?}", e)))?;
 
         Ok(decrypted_data.to_vec())
     }

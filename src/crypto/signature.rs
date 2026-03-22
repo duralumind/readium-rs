@@ -4,16 +4,17 @@
 //! - Algorithm: `http://www.w3.org/2001/04/xmldsig-more#rsa-sha256`
 //! - The canonical JSON of the license (minus signature) is signed using PKCS#1 v1.5 with SHA-256
 
-use base64::{Engine, engine::general_purpose};
+use base64::{engine::general_purpose, Engine};
 use rsa::{
-    RsaPrivateKey, RsaPublicKey,
     pkcs1v15::{SigningKey, VerifyingKey},
     signature::{SignatureEncoding, Signer, Verifier},
+    RsaPrivateKey, RsaPublicKey,
 };
 use sha2::Sha256;
+use thiserror::Error;
 use x509_cert::{
-    Certificate,
     der::{Decode, Encode},
+    Certificate,
 };
 
 /// The algorithm URI for RSA-SHA256 as defined in XML-SIG
@@ -140,27 +141,20 @@ pub fn load_certificate_from_der(der_bytes: &[u8]) -> Result<Certificate, Signat
 }
 
 /// Errors that can occur during signing or verification.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum SignatureError {
     /// Error related to the private/public key
+    #[error("Key error: {0}")]
     KeyError(String),
     /// Error related to certificate parsing or validation
+    #[error("Certificate error: {0}")]
     CertificateError(String),
     /// The signature format is invalid
+    #[error("Invalid signature: {0}")]
     InvalidSignature(String),
     /// Signature verification failed (signature doesn't match)
+    #[error("Verification failed: {0}")]
     VerificationFailed(String),
-}
-
-impl std::fmt::Display for SignatureError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SignatureError::KeyError(msg) => write!(f, "Key error: {}", msg),
-            SignatureError::CertificateError(msg) => write!(f, "Certificate error: {}", msg),
-            SignatureError::InvalidSignature(msg) => write!(f, "Invalid signature: {}", msg),
-            SignatureError::VerificationFailed(msg) => write!(f, "Verification failed: {}", msg),
-        }
-    }
 }
 
 #[cfg(test)]

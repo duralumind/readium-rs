@@ -1,11 +1,29 @@
 use super::cipher;
-use base64::{Engine as _, engine::general_purpose};
-use rand::{TryRngCore, rngs::OsRng};
+use base64::{engine::general_purpose, Engine as _};
+use rand::{rngs::OsRng, TryRngCore};
 use serde_derive::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use thiserror::Error;
 use zeroize::Zeroize;
 
 use crate::Transform;
+
+/// Errors that can occur during key operations.
+#[derive(Debug, Error)]
+pub enum KeyError {
+    /// Base64 decoding failed
+    #[error("Base64 decode failed: {0}")]
+    Base64DecodeFailed(String),
+    /// Invalid key length
+    #[error("Invalid key length: expected {expected}, got {actual}")]
+    InvalidKeyLength { expected: usize, actual: usize },
+    /// Decryption of key material failed
+    #[error("Decryption failed: {0}")]
+    DecryptionFailed(String),
+    /// Failed to extract bytes from data
+    #[error("Failed to extract bytes: {0}")]
+    ByteExtractionFailed(String),
+}
 
 /// The password chosen by the user to encrypt/decrypt the publication.
 #[derive(Clone, Serialize, Deserialize, Zeroize)]
@@ -73,12 +91,13 @@ impl ContentKey {
     pub fn decrypt_content_key(
         encrypted_key: &EncryptedContentKey,
         user_key: &UserEncryptionKey,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, KeyError> {
         let decrypted = cipher::aes_cbc256::decrypt_aes_256_cbc(
             encrypted_key.key(),
             user_key.key(),
             encrypted_key.iv(),
-        )?;
+        )
+        .map_err(|e| KeyError::DecryptionFailed(e.to_string()))?;
         let mut content_key = [0; 32];
         content_key.copy_from_slice(&decrypted);
         Ok(ContentKey(content_key))
@@ -98,24 +117,24 @@ pub struct EncryptedContentKey {
 
 impl EncryptedContentKey {
     /// Create an [`EncryptedContentKey`] by decoding raw bytes.
-    pub fn new_from_raw_bytes(base64_encrypted_key: &str) -> Result<Self, String> {
+    pub fn new_from_raw_bytes(base64_encrypted_key: &str) -> Result<Self, KeyError> {
         let encrypted_key_bytes = general_purpose::STANDARD
             .decode(base64_encrypted_key)
-            .map_err(|e| format!("Base64 decode of content key failed, err: {:?}", e))?;
+            .map_err(|e| KeyError::Base64DecodeFailed(format!("{:?}", e)))?;
 
         if encrypted_key_bytes.len() != 64 {
-            return Err(format!(
-                "Expected 64 bytes for encrypted content key, got {}",
-                encrypted_key_bytes.len()
-            ));
+            return Err(KeyError::InvalidKeyLength {
+                expected: 64,
+                actual: encrypted_key_bytes.len(),
+            });
         }
         let (iv_slice, key_slice) = encrypted_key_bytes.split_at(16);
         let key = key_slice
             .try_into()
-            .map_err(|_| "Failed to extract key bytes".to_string())?;
+            .map_err(|_| KeyError::ByteExtractionFailed("key bytes".to_string()))?;
         let iv = iv_slice
             .try_into()
-            .map_err(|_| "Failed to extract iv bytes".to_string())?;
+            .map_err(|_| KeyError::ByteExtractionFailed("iv bytes".to_string()))?;
 
         Ok(Self { key, iv })
     }
@@ -160,10 +179,11 @@ impl EncryptedContentKey {
         &self,
         passphrase: UserPassphrase,
         transform: impl Transform,
-    ) -> Result<ContentKey, String> {
+    ) -> Result<ContentKey, KeyError> {
         let user_key = UserEncryptionKey::new(passphrase, HashAlgorithm::Sha256, transform);
         let decrypted =
-            cipher::aes_cbc256::decrypt_aes_256_cbc(&self.key, user_key.key(), &self.iv)?;
+            cipher::aes_cbc256::decrypt_aes_256_cbc(&self.key, user_key.key(), &self.iv)
+                .map_err(|e| KeyError::DecryptionFailed(e.to_string()))?;
         let mut content_key = [0; 32];
         content_key.copy_from_slice(&decrypted);
         Ok(ContentKey(content_key))

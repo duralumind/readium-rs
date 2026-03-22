@@ -48,11 +48,11 @@ pub mod optional_date_format {
 }
 
 pub mod certificate_format {
-    use base64::{Engine, engine::general_purpose};
+    use base64::{engine::general_purpose, Engine};
     use serde::{self, Deserialize, Deserializer, Serializer};
     use x509_cert::{
-        Certificate,
         der::{Decode, Encode},
+        Certificate,
     };
 
     pub fn serialize<S>(certificate: &Certificate, serializer: S) -> Result<S::Ok, S::Error>
