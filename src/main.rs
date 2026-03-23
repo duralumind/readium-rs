@@ -1,9 +1,9 @@
 use clap::{Parser, Subcommand};
-use readium_rs::{decrypt_epub, encrypt_epub, license::EncryptionProfile};
+use lcp_rs::{DecryptionInput, decrypt_epub, encrypt_epub, license::EncryptionProfile};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "readium-rs")]
+#[command(name = "lcp-rs")]
 #[command(about = "LCP DRM encryption/decryption for EPUB files")]
 pub struct Cli {
     #[command(subcommand)]
@@ -37,7 +37,12 @@ pub enum Commands {
     /// Decrypt an LCP-protected EPUB file
     Decrypt {
         /// Path to the encrypted EPUB (with embedded .lcpl)
-        input: PathBuf,
+        #[arg(long, conflicts_with = "lcpl")]
+        input: Option<PathBuf>,
+
+        /// Path to the lcpl file which contains the link to the publication
+        #[arg(long, conflicts_with = "input")]
+        lcpl: Option<PathBuf>,
 
         /// User password for decryption
         #[arg(long)]
@@ -66,9 +71,21 @@ fn main() {
         } => encrypt_epub(input, password, password_hint, profile, output).unwrap(),
         Commands::Decrypt {
             input,
+            lcpl,
             password,
             profile,
             output,
-        } => decrypt_epub(input, password, profile, output).unwrap(),
+        } => {
+            let decryption_input = match (input, lcpl) {
+                (Some(path), None) => DecryptionInput::EmbeddedEpub(path),
+                (None, Some(path)) => DecryptionInput::Lcpl(path),
+                (None, None) => {
+                    eprintln!("Error: Either --input or --lcpl must be provided");
+                    std::process::exit(1);
+                }
+                (Some(_), Some(_)) => unreachable!("clap conflicts_with prevents this"),
+            };
+            decrypt_epub(decryption_input, password, profile, output).unwrap()
+        }
     }
 }

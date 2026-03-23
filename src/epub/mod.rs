@@ -60,6 +60,9 @@ pub enum EpubError {
     /// Invalid string data
     #[error("Invalid string data: {0}")]
     InvalidStringData(String),
+    /// Download operation failed
+    #[error("Download failed: {0}")]
+    DownloadFailed(String),
 }
 
 /// Compress data using the Deflate algorithm.

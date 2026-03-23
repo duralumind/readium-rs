@@ -8,7 +8,7 @@ use crate::{
         signature::{load_certificate_from_der, load_private_key_from_der},
     },
     epub::Epub,
-    license::LicenseBuilder,
+    license::{License, LicenseBuilder},
 };
 use thiserror::Error;
 
@@ -24,7 +24,26 @@ pub use epub::EpubError;
 pub use license::LicenseError;
 
 use license::EncryptionProfile;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Input source for decryption - either an encrypted EPUB with embedded license,
+/// or a standalone LCPL license file that references the publication URL.
+pub enum DecryptionInput {
+    /// Decrypt from an epub file that contains the license file
+    /// embedded in the metadata.
+    EmbeddedEpub(PathBuf),
+    /// Decrypt from a plain lcpl license file which contains the link to the publication.
+    Lcpl(PathBuf),
+}
+
+impl DecryptionInput {
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::EmbeddedEpub(p) => p,
+            Self::Lcpl(p) => p,
+        }
+    }
+}
 
 /// Unified error type for the readium-rs library.
 #[derive(Debug, Error)]
@@ -95,26 +114,75 @@ pub fn encrypt_epub(
 }
 
 pub fn decrypt_epub(
-    input: PathBuf,
+    input: DecryptionInput,
     password: String,
     profile: EncryptionProfile,
     output: Option<PathBuf>,
 ) -> Result<(), Error> {
     let output_path = output.unwrap_or_else(|| {
-        let stem = input.file_stem().unwrap_or_default().to_string_lossy();
-        input.with_file_name(format!("{}.decrypted.epub", stem))
+        let stem = input
+            .path()
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy();
+        input
+            .path()
+            .with_file_name(format!("{}.decrypted.epub", stem))
     });
 
     println!("Decrypting EPUB:");
-    println!("  Input:    {}", input.display());
+    println!("  Input:    {}", input.path().display());
     println!("  Output:   {}", output_path.display());
     println!("  Profile:  {:?}", profile);
 
     // step 1: parse the epub file and get the license
-    let mut epub = Epub::new(input)?;
-    let license = epub
-        .license()
-        .ok_or(EpubError::MissingRequiredFile("license.lcpl".to_string()))?;
+    let (epub_path, license_opt) = match input {
+        DecryptionInput::EmbeddedEpub(path) => (path, None),
+        DecryptionInput::Lcpl(path) => {
+            // 1. Read and parse the LCPL file
+            let lcpl_contents = std::fs::read_to_string(&path).map_err(|e| {
+                EpubError::MissingRequiredFile(format!("Failed to read LCPL file: {}", e))
+            })?;
+            let license: License = serde_json::from_str(&lcpl_contents).map_err(|e| {
+                LicenseError::SerializationFailed(format!("Failed to parse LCPL: {}", e))
+            })?;
+
+            // 2. Get the publication download URL
+            let publication_url = license.publication_link().ok_or_else(|| {
+                LicenseError::SerializationFailed("LCPL missing publication link".to_string())
+            })?;
+
+            // 3. Download the encrypted EPUB to temp directory
+            let temp_dir = std::env::temp_dir();
+            let epub_filename = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+                + ".epub";
+            let epub_path = temp_dir.join(&epub_filename);
+
+            println!("  Downloading publication from: {}", publication_url);
+            let response = reqwest::blocking::get(&publication_url)
+                .map_err(|e| EpubError::DownloadFailed(format!("HTTP request failed: {}", e)))?;
+            let bytes = response.bytes().map_err(|e| {
+                EpubError::DownloadFailed(format!("Failed to read response body: {}", e))
+            })?;
+            std::fs::write(&epub_path, &bytes).map_err(|e| {
+                EpubError::WriteFailed(format!("Failed to write downloaded EPUB: {}", e))
+            })?;
+            println!("  Downloaded to: {}", epub_path.display());
+
+            (epub_path, Some(license))
+        }
+    };
+    let mut epub = Epub::new(epub_path)?;
+    let license = match license_opt.as_ref() {
+        Some(l) => l,
+        None => epub
+            .license()
+            .ok_or(EpubError::MissingRequiredFile("license.lcpl".to_string()))?,
+    };
     // step 2: do the key check and decrypt the content key
     let passphrase = UserPassphrase(password);
     let user_encryption_key =
@@ -144,7 +212,7 @@ mod tests {
         )
         .unwrap();
         let _ = decrypt_epub(
-            PathBuf::from("samples/way_of_kings_encrypted.epub"),
+            DecryptionInput::EmbeddedEpub(PathBuf::from("samples/way_of_kings_encrypted.epub")),
             "test123".to_string(),
             EncryptionProfile::Basic,
             Some(PathBuf::from("samples/way_of_kings_decrypted.epub")),

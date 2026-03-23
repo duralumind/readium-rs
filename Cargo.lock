@@ -771,6 +771,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "lcp-rs"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "base64",
+ "block-padding",
+ "cbc",
+ "chrono",
+ "clap",
+ "flate2",
+ "hex",
+ "rand 0.9.2",
+ "reqwest",
+ "roxmltree",
+ "rsa",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "uuid",
+ "x509-cert",
+ "zeroize",
+ "zip",
+]
+
+[[package]]
 name = "leb128fmt"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1111,33 +1138,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
 dependencies = [
  "getrandom 0.3.4",
-]
-
-[[package]]
-name = "readium-rs"
-version = "0.1.0"
-dependencies = [
- "aes",
- "base64",
- "block-padding",
- "cbc",
- "chrono",
- "clap",
- "flate2",
- "hex",
- "rand 0.9.2",
- "reqwest",
- "roxmltree",
- "rsa",
- "serde",
- "serde_derive",
- "serde_json",
- "sha2",
- "thiserror",
- "uuid",
- "x509-cert",
- "zeroize",
- "zip",
 ]
 
 [[package]]
