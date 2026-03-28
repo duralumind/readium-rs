@@ -245,7 +245,7 @@ impl Epub {
 
     /// Returns the path to the OPF file from container.xml.
     pub fn opf_path(&self) -> Result<String, EpubError> {
-        xml_utils::parse_container_xml(&self.container).map_err(|e| EpubError::XmlParseFailed(e))
+        xml_utils::parse_container_xml(&self.container).map_err(EpubError::XmlParseFailed)
     }
 
     /// Returns a list of manifest items from the opf file.
@@ -253,8 +253,7 @@ impl Epub {
         let opf_path = self.opf_path()?;
         let manifest = read_file_from_archive(&mut self.archive, &opf_path)?
             .ok_or_else(|| EpubError::MissingRequiredFile(opf_path.clone()))?;
-        let manifest_items =
-            parse_opf_manifest(&manifest).map_err(|e| EpubError::XmlParseFailed(e))?;
+        let manifest_items = parse_opf_manifest(&manifest).map_err(EpubError::XmlParseFailed)?;
 
         Ok(manifest_items)
     }
@@ -418,7 +417,7 @@ impl Epub {
             .as_ref()
             .ok_or_else(|| EpubError::MissingRequiredFile(ENCRYPTION_FILE.to_string()))?;
 
-        parse_encryption_xml(encryption_xml).map_err(|e| EpubError::XmlParseFailed(e))
+        parse_encryption_xml(encryption_xml).map_err(EpubError::XmlParseFailed)
     }
 }
 
