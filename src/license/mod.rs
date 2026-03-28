@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::crypto::cipher::aes_cbc256;
 use crate::crypto::key::{ContentKey, EncryptedContentKey, UserEncryptionKey};
 use crate::crypto::signature::{RSA_SHA256_ALGORITHM, sign_license};
-use crate::epub;
+use crate::{crypto, epub};
 use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, FixedOffset, Utc};
 use encoding::{certificate_format, date_format, optional_date_format};
@@ -44,6 +44,9 @@ pub enum LicenseError {
     /// Cipher operation failed
     #[error("Cipher operation failed: {0}")]
     CipherFailed(String),
+    /// Cipher operation failed
+    #[error("Signature validation failed: {0}")]
+    SignatureValidationError(String),
 }
 
 pub const DEFAULT_PROVIDER: &str = "https://www.duralumind.com";
@@ -311,6 +314,37 @@ impl License {
         let content_key = ContentKey::decrypt_content_key(&encrypted_content_key, user_key)
             .map_err(|e| LicenseError::ContentKeyDecryptionFailed(e.to_string()))?;
         Ok(content_key)
+    }
+
+    /// Verify that the signature against the provider certificate in the license
+    /// file. Also verifies that the provider certificate is signed by the root certificate.
+    pub fn verify_signature_and_provider(
+        &self,
+        root_certificate: &Certificate,
+    ) -> Result<(), LicenseError> {
+        let Some(signature) = &self.signature else {
+            return Err(LicenseError::MissingSignature);
+        };
+
+        crypto::signature::validate_provider_certificate(&signature.certificate, root_certificate)
+            .map_err(|e| {
+                LicenseError::SignatureValidationError(format!(
+                    "Failed to validate provider signature: {}",
+                    e
+                ))
+            })?;
+        crypto::signature::verify_license_signature(
+            self.canonical_json()?.as_bytes(),
+            &signature.value,
+            &signature.certificate,
+        )
+        .map_err(|e| {
+            LicenseError::SignatureValidationError(format!(
+                "Failed to validate license signature: {}",
+                e
+            ))
+        })?;
+        Ok(())
     }
 }
 

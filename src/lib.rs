@@ -26,6 +26,8 @@ pub use license::LicenseError;
 use license::EncryptionProfile;
 use std::path::{Path, PathBuf};
 
+const ROOT_CA_DER: &[u8] = include_bytes!("../certs/root_ca.der");
+
 /// Input source for decryption - either an encrypted EPUB with embedded license,
 /// or a standalone LCPL license file that references the publication URL.
 pub enum DecryptionInput {
@@ -185,9 +187,12 @@ pub fn decrypt_epub(
     };
     // step 2: do the key check and decrypt the content key
     let passphrase = UserPassphrase(password);
+    let root_cert =
+        load_certificate_from_der(ROOT_CA_DER).expect("Failed to load root certificate");
     let user_encryption_key =
         UserEncryptionKey::new(passphrase, crypto::key::HashAlgorithm::Sha256, profile);
     license.key_check(&user_encryption_key)?;
+    license.verify_signature_and_provider(&root_cert)?;
     let content_key = license.decrypt_content_key(&user_encryption_key)?;
     // step 3: create and write decrypted epub
     let decrypted_epub = epub.create_decrypted_epub(output_path, &content_key)?;
@@ -202,20 +207,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn testing_encryption_full() {
+    fn test_full_roundtrip() {
         let _ = encrypt_epub(
             PathBuf::from("samples/way_of_kings.epub"),
             "test123".to_string(),
             "password is test123".to_string(),
             EncryptionProfile::Basic,
-            Some(PathBuf::from("samples/way_of_kings_encrypted.epub")),
+            Some(PathBuf::from("/tmp/way_of_kings_encrypted.epub")),
         )
         .unwrap();
         let _ = decrypt_epub(
-            DecryptionInput::EmbeddedEpub(PathBuf::from("samples/way_of_kings_encrypted.epub")),
+            DecryptionInput::EmbeddedEpub(PathBuf::from("/tmp/way_of_kings_encrypted.epub")),
             "test123".to_string(),
             EncryptionProfile::Basic,
-            Some(PathBuf::from("samples/way_of_kings_decrypted.epub")),
+            Some(PathBuf::from("/tmp/way_of_kings_decrypted.epub")),
         )
         .unwrap();
     }
