@@ -1,0 +1,26 @@
+FROM rustlang/rust:nightly-slim
+
+RUN apt-get update && apt-get install -y \
+    wget xz-utils \
+    gcc-arm-linux-gnueabihf \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install zig
+RUN wget -q https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz \
+    && tar -xf zig-linux-x86_64-0.13.0.tar.xz -C /usr/local \
+    && ln -s /usr/local/zig-linux-x86_64-0.13.0/zig /usr/local/bin/zig \
+    && rm zig-linux-x86_64-0.13.0.tar.xz
+
+RUN cargo install cargo-zigbuild \
+    && rustup target add armv7-unknown-linux-gnueabihf \
+    && rustup component add rust-src
+
+WORKDIR /src
+
+COPY . .
+
+ENV RUSTFLAGS="-C target-feature=-neon -C panic=abort"
+
+RUN cargo zigbuild -Z build-std=std,panic_abort --release -p plugin-test --target armv7-unknown-linux-gnueabihf.2.17
+
+CMD ["cp", "target/armv7-unknown-linux-gnueabihf/release/libplugin_test.so", "/out/libplugin_test.so"]
