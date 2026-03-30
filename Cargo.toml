@@ -3,4 +3,8 @@ resolver = "3"
 members = [
     "crates/lcp-core",
     "crates/lcp-cli",
+    "crates/plugin",
 ]
+
+[profile.release]
+panic = "abort"
