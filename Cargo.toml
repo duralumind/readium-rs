@@ -3,5 +3,4 @@ resolver = "3"
 members = [
     "crates/lcp-core",
     "crates/lcp-cli",
-    "crates/lcp-server",
 ]
