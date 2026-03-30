@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y \
     gcc-arm-linux-gnueabihf \
     && rm -rf /var/lib/apt/lists/*
 
-# Install zig (for zigbuild's linker to target specific glibc version)
+# Install zig (for targeting specific glibc version in Rust compilation)
 RUN wget -q https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz \
     && tar -xf zig-linux-x86_64-0.13.0.tar.xz -C /usr/local \
     && ln -s /usr/local/zig-linux-x86_64-0.13.0/zig /usr/local/bin/zig \
@@ -18,7 +18,17 @@ WORKDIR /src
 
 COPY . .
 
-# Target glibc 2.17 — Kobo only has up to GLIBC_2.18
-RUN RUSTFLAGS="-C target-feature=-neon -C panic=abort" cargo zigbuild --release -p plugin --target armv7-unknown-linux-gnueabihf.2.17
+ENV RUSTFLAGS="-C target-feature=-neon -C panic=abort"
 
-CMD ["cp", "target/armv7-unknown-linux-gnueabihf/release/libreadium_lcp.so", "/out/libreadium_lcp.so"]
+# Build Rust as a static library (.a) — zigbuild targets glibc 2.17
+RUN cargo zigbuild --release -p plugin --target armv7-unknown-linux-gnueabihf.2.17
+
+# Link into a .so using ARM GCC's linker (produces ELF compatible with Kobo's ancient ld.so)
+# -nostdlib: don't link GCC's crt/libc (avoids embedding newer glibc version requirements)
+# -lgcc: compiler intrinsics (64-bit division etc on 32-bit ARM) — static, no glibc dependency
+# libc/pthread/dl symbols are left unresolved, resolved at runtime by Kobo's own glibc
+RUN arm-linux-gnueabihf-gcc -shared -nostdlib -o target/libreadium_lcp.so \
+    -Wl,--whole-archive target/armv7-unknown-linux-gnueabihf/release/libreadium_lcp.a -Wl,--no-whole-archive \
+    -lgcc
+
+CMD ["cp", "target/libreadium_lcp.so", "/out/libreadium_lcp.so"]

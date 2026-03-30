@@ -5,7 +5,7 @@ edition = "2024"
 
 [lib]
 name = "readium_lcp"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 lcp-core = {path = "../lcp-core"}
