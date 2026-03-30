@@ -11,7 +11,7 @@ WORKDIR /src
 
 COPY . .
 
-ENV RUSTFLAGS="-C target-feature=-C panic=abort"
+ENV RUSTFLAGS="-C panic=abort"
 
 # Build Rust as a static library
 RUN cargo build --release -p plugin --target armv7-unknown-linux-gnueabihf
