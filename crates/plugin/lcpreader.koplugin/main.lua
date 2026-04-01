@@ -42,6 +42,21 @@ function LcpReader:init()
 
     -- Load cached passphrases from persistent storage
     self.passphrase_cache = G_reader_settings:readSetting("lcp_passphrase_cache", {})
+    self.decrypted_files = {}
+    self:cleanupStaleFiles()
+end
+
+function LcpReader:cleanupStaleFiles()
+    local temp_dir = os.getenv("TMPDIR") or os.getenv("TMP") or "/tmp"
+    local p = io.popen('ls "' .. temp_dir .. '"')
+    if not p then return end
+    for name in p:lines() do
+        if name:match("_lcp_%d+%.epub$") then
+            logger.dbg("LcpReader: removing stale decrypted file:", name)
+            os.remove(temp_dir .. "/" .. name)
+        end
+    end
+    p:close()
 end
 
 function LcpReader:registerDocumentRegistryAuxProvider()
@@ -157,7 +172,7 @@ function LcpReader:getTempPath(original_path)
     local temp_dir = os.getenv("TMPDIR") or os.getenv("TMP") or "/tmp"
     local _, filename = util.splitFilePathName(original_path)
     local name_without_ext = filename:match("(.+)%..+$") or filename
-    local temp_name = name_without_ext .. "_decrypted.epub"
+    local temp_name = name_without_ext .. "_lcp_" .. math.random(100000, 999999) .. ".epub"
     return temp_dir .. "/" .. temp_name
 end
 
@@ -299,9 +314,8 @@ function LcpReader:openDecryptedFile(original_file, decrypted_file)
         return
     end
 
-    -- Store reference to original file for cleanup
-    self.current_decrypted_file = decrypted_file
-    self.current_original_file = original_file
+    -- Track for cleanup
+    table.insert(self.decrypted_files, decrypted_file)
 
     -- Open with ReaderUI
     local ReaderUI = require("apps/reader/readerui")
@@ -326,6 +340,22 @@ function LcpReader:isFileTypeSupported(file)
     -- We handle EPUB files
     local suffix = util.getFileNameSuffix(file):lower()
     return suffix == "epub"
+end
+
+function LcpReader:cleanupDecryptedFiles()
+    for _, path in ipairs(self.decrypted_files) do
+        logger.dbg("LcpReader: cleaning up", path)
+        os.remove(path)
+    end
+    self.decrypted_files = {}
+end
+
+function LcpReader:onCloseDocument()
+    self:cleanupDecryptedFiles()
+end
+
+function LcpReader:onExit()
+    self:cleanupDecryptedFiles()
 end
 
 return LcpReader
