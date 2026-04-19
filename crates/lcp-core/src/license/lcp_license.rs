@@ -1,6 +1,5 @@
 use rsa::RsaPrivateKey;
 use std::collections::HashMap;
-use std::str::FromStr;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -8,7 +7,6 @@ use super::encoding::{certificate_format, date_format, optional_date_format};
 use crate::crypto::cipher::aes_cbc256;
 use crate::crypto::key::{ContentKey, EncryptedContentKey, UserEncryptionKey};
 use crate::crypto::signature::{RSA_SHA256_ALGORITHM, sign_license};
-use crate::license::EncryptionProfile;
 use crate::{crypto, epub};
 use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, FixedOffset, Utc};
@@ -278,12 +276,9 @@ impl License {
         })
     }
 
-    /// Returns the encryption profile that is used in this license.
-    ///
-    /// Returns Ok if we support the profile otherwise returns an error.
-    pub fn profile(&self) -> Result<EncryptionProfile, LicenseError> {
-        EncryptionProfile::from_str(&self.encryption.profile)
-            .map_err(LicenseError::UnsupportedEncryptionProfile)
+    /// Returns the raw profile URI string from the license document.
+    pub fn profile_uri(&self) -> &str {
+        &self.encryption.profile
     }
 
     /// Check that the `key_check` bytes decrypted with the user encryption key is
@@ -405,7 +400,9 @@ impl LicenseBuilder {
         encrypted_key: &EncryptedContentKey,
         user_key: &UserEncryptionKey,
         hint: String,
+        profile_uri: &str,
     ) -> Self {
+        self.0.encryption.profile = profile_uri.to_string();
         self.0.encryption.content_key.encrypted_value = encrypted_key.to_base64();
         let key_check =
             aes_cbc256::encrypt_aes_256_cbc_with_random_iv(self.0.id.as_bytes(), user_key.key());

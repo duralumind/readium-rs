@@ -12,9 +12,10 @@ use crate::{
 };
 use thiserror::Error;
 
-/// This is the trait that needs to be implemented to support additional
-/// production profiles. See docs for details.
-pub use crypto::transform::Transform;
+/// These are the types needed to support additional production profiles.
+/// Implement [`TransformResolver`] to map profile URIs to your [`Transform`].
+/// See docs for details.
+pub use crypto::transform::{BasicResolver, BasicTransform, Transform, TransformResolver};
 
 // Re-export module-specific error types
 pub use crypto::cipher::CipherError;
@@ -23,7 +24,6 @@ pub use crypto::signature::SignatureError;
 pub use epub::EpubError;
 pub use license::LicenseError;
 
-use license::EncryptionProfile;
 use std::path::PathBuf;
 
 /// Unified error type for the lcp-core library.
@@ -45,11 +45,16 @@ pub enum Error {
 ///
 /// Accepts provider certificate and private key as parameters so that callers
 /// (CLI, server) can supply their own credentials.
+///
+/// The `profile_uri` specifies the encryption profile to use (e.g.,
+/// `"http://readium.org/lcp/basic-profile"`). The `resolver` is used to obtain
+/// the corresponding [`Transform`] for that profile.
 pub fn encrypt_epub(
     input: PathBuf,
     password: String,
     password_hint: String,
-    profile: EncryptionProfile,
+    profile_uri: &str,
+    resolver: &dyn TransformResolver,
     output: Option<PathBuf>,
     provider_cert_der: &[u8],
     provider_private_key_der: &[u8],
@@ -62,17 +67,22 @@ pub fn encrypt_epub(
     println!("Encrypting EPUB:");
     println!("  Input:    {:?}", input.canonicalize());
     println!("  Output:   {}", output_path.display());
-    println!("  Profile:  {:?}", profile);
+    println!("  Profile:  {}", profile_uri);
+
+    let transform = resolver
+        .resolve(profile_uri)
+        .map_err(|e| Error::License(LicenseError::UnsupportedEncryptionProfile(e)))?;
 
     let mut epub = Epub::new(input)?;
     let passphrase = UserPassphrase(password);
     let user_key = UserEncryptionKey::new(
         passphrase.clone(),
         crypto::key::HashAlgorithm::Sha256,
-        profile,
+        &*transform,
     );
     let content_key = ContentKey::generate();
-    let encrypted_content_key = EncryptedContentKey::new(content_key.clone(), passphrase, profile);
+    let encrypted_content_key =
+        EncryptedContentKey::new(content_key.clone(), passphrase, &*transform);
     let encrypted_epub = epub.create_encrypted_epub(output_path, &content_key)?;
 
     let private_key =
@@ -80,7 +90,12 @@ pub fn encrypt_epub(
     let provider_certificate =
         load_certificate_from_der(provider_cert_der).map_err(Error::Signature)?;
     let license = LicenseBuilder::new()
-        .encryption(&encrypted_content_key, &user_key, password_hint)
+        .encryption(
+            &encrypted_content_key,
+            &user_key,
+            password_hint,
+            profile_uri,
+        )
         .sign(&private_key, &provider_certificate)?
         .build()?;
 
@@ -235,6 +250,7 @@ pub fn decrypt_epub(
     password: String,
     output: Option<PathBuf>,
     root_ca_der: &[u8],
+    resolver: &dyn TransformResolver,
 ) -> Result<(), Error> {
     let output_path = output.unwrap_or_else(|| {
         let stem = epub_path.file_stem().unwrap_or_default().to_string_lossy();
@@ -252,12 +268,14 @@ pub fn decrypt_epub(
             .license()
             .ok_or(EpubError::MissingRequiredFile("license.lcpl".to_string()))?,
     };
-    let profile = license.profile().map_err(Error::License)?;
+    let transform = resolver
+        .resolve(license.profile_uri())
+        .map_err(|e| Error::License(LicenseError::UnsupportedEncryptionProfile(e)))?;
     let passphrase = UserPassphrase(password);
     let root_cert =
         load_certificate_from_der(root_ca_der).expect("Failed to load root certificate");
     let user_encryption_key =
-        UserEncryptionKey::new(passphrase, crypto::key::HashAlgorithm::Sha256, profile);
+        UserEncryptionKey::new(passphrase, crypto::key::HashAlgorithm::Sha256, &*transform);
     license.key_check(&user_encryption_key)?;
     license.verify_signature_and_provider(&root_cert)?;
     let content_key = license.decrypt_content_key(&user_encryption_key)?;
@@ -270,6 +288,8 @@ pub fn decrypt_epub(
 
 #[cfg(test)]
 mod tests {
+    use crate::license::lcp_license::DEFAULT_ENCRYPTION_PROFILE;
+
     use super::*;
 
     const ROOT_CA_DER: &[u8] = include_bytes!("../../../certs/root_ca.der");
@@ -278,11 +298,13 @@ mod tests {
 
     #[test]
     fn test_full_roundtrip() {
+        let resolver = BasicResolver;
         encrypt_epub(
             PathBuf::from("../../samples/moby-dick.epub"),
             "test123".to_string(),
             "password is test123".to_string(),
-            EncryptionProfile::Basic,
+            DEFAULT_ENCRYPTION_PROFILE,
+            &resolver,
             Some(PathBuf::from("/tmp/moby-dick-encrypted.epub")),
             PROVIDER_CERT_DER,
             PROVIDER_PRIVATE_KEY_DER,
@@ -294,6 +316,7 @@ mod tests {
             "test123".to_string(),
             Some(PathBuf::from("/tmp/moby-dick-decrypted.epub")),
             ROOT_CA_DER,
+            &resolver,
         )
         .unwrap();
     }
