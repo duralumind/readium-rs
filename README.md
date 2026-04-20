@@ -93,8 +93,8 @@ impl TransformResolver for ProductionResolver {
     fn resolve(&self, profile_uri: &str) -> Result<Box<dyn Transform>, String> {
         match profile_uri {
             "http://readium.org/lcp/basic-profile" => Ok(Box::new(BasicTransform)),
-            "http://example.com/lcp/production-1.0" => Ok(Box::new(MyTransform::Production1_0)),
-            "http://example.com/lcp/production-1.1" => Ok(Box::new(MyTransform::Production1_1)),
+            "http://example.com/lcp/production-1.0" => Ok(Box::new(ProductionTransform::Production1_0)),
+            "http://example.com/lcp/production-1.1" => Ok(Box::new(ProductionTransform::Production1_1)),
             other => Err(format!("Unsupported profile: {}", other)),
         }
     }
